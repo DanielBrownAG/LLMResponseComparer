@@ -1,5 +1,7 @@
 # LLM Response Comparator
 
+![LLM Response Comparator](main.png)
+
 A professional, lightweight Node.js web application for comparing responses from different LLM models side-by-side in real-time.
 
 ## Features
