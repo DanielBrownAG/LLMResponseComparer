@@ -26,6 +26,8 @@ const rightTime = document.getElementById('rightTime');
 // State
 let isComparing = false;
 let availableModels = [];
+let comparisonController = null;
+const receivedContent = new Set();
 
 /**
  * Initialize application
@@ -34,11 +36,15 @@ async function init() {
   try {
     // Fetch available models
     const response = await fetch('/api/models');
+    if (!response.ok) throw new Error('Failed to load models');
     const data = await response.json();
     availableModels = data.models;
 
     // Populate model dropdowns
     populateModelSelects();
+    if (availableModels.length < 2) {
+      showError('Configure an OpenAI API key or at least two model deployments, then restart the server.');
+    }
 
     // Attach event listeners
     compareBtn.addEventListener('click', handleCompare);
@@ -58,12 +64,10 @@ async function init() {
  * Populate model selection dropdowns
  */
 function populateModelSelects() {
-  const html = availableModels
-    .map((model) => `<option value="${model.id}">${model.name}</option>`)
-    .join('');
-
-  leftModelSelect.innerHTML = `<option value="">Select model...</option>${html}`;
-  rightModelSelect.innerHTML = `<option value="">Select model...</option>${html}`;
+  for (const select of [leftModelSelect, rightModelSelect]) {
+    select.replaceChildren(new Option('Select model...', ''));
+    for (const model of availableModels) select.add(new Option(model.name, model.id));
+  }
 
   // Set defaults if available
   if (availableModels.length >= 2) {
@@ -76,6 +80,7 @@ function populateModelSelects() {
  * Handle compare button click
  */
 async function handleCompare() {
+  if (isComparing) return;
   const prompt = promptInput.value.trim();
   const leftModel = leftModelSelect.value;
   const rightModel = rightModelSelect.value;
@@ -111,7 +116,10 @@ async function performComparison(prompt, leftModelId, rightModelId) {
   if (isComparing) return;
 
   isComparing = true;
+  comparisonController = new AbortController();
+  receivedContent.clear();
   compareBtn.disabled = true;
+  compareBtn.textContent = 'Comparing...';
   loadingOverlay.classList.remove('hidden');
   errorSection.classList.add('hidden');
   resultsSection.classList.remove('hidden');
@@ -136,6 +144,7 @@ async function performComparison(prompt, leftModelId, rightModelId) {
       headers: {
         'Content-Type': 'application/json'
       },
+      signal: comparisonController.signal,
       body: JSON.stringify({
         prompt,
         leftModel: leftModelId,
@@ -152,36 +161,48 @@ async function performComparison(prompt, leftModelId, rightModelId) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let completed = false;
+    function processLine(line) {
+      if (!line.startsWith('data:')) return;
+      const event = JSON.parse(line.slice(5).trim());
+      if (event.type === 'complete') completed = true;
+      handleStreamEvent(event);
+    }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          buffer += decoder.decode();
+          if (buffer.trim()) processLine(buffer);
+          break;
+        }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
 
-      // Keep the last incomplete line in the buffer
-      buffer = lines[lines.length - 1];
+        // Keep the last incomplete line in the buffer.
+        buffer = lines[lines.length - 1];
 
-      // Process complete lines
-      for (let i = 0; i < lines.length - 1; i++) {
-        const line = lines[i];
-        if (line.startsWith('data: ')) {
-          try {
-            const event = JSON.parse(line.slice(6));
-            handleStreamEvent(event);
-          } catch (e) {
-            console.error('Failed to parse event:', e);
-          }
+        for (let i = 0; i < lines.length - 1; i++) {
+          processLine(lines[i]);
         }
       }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
+    if (!completed) throw new Error('Connection closed before comparison completed');
   } catch (error) {
-    console.error('Comparison error:', error);
-    showError(error.message || 'An error occurred during comparison');
+    if (error.name !== 'AbortError') {
+      errorMessage.textContent = error.message || 'An error occurred during comparison';
+      errorSection.classList.remove('hidden');
+    }
   } finally {
+    comparisonController = null;
     isComparing = false;
-    compareBtn.disabled = false;
+    compareBtn.disabled = availableModels.length < 2;
+    compareBtn.textContent = 'Compare';
     loadingOverlay.classList.add('hidden');
   }
 }
@@ -201,7 +222,7 @@ function handleStreamEvent(event) {
       handleStreamError(event);
       break;
     case 'complete':
-      handleComplete();
+      handleComplete(event);
       break;
   }
 }
@@ -214,8 +235,9 @@ function handleChunk(event) {
   const targetElement = side === 'left' ? leftContent : rightContent;
 
   // Clear initial loading message
-  if (targetElement.textContent.includes('Waiting for response')) {
+  if (!receivedContent.has(side)) {
     targetElement.textContent = '';
+    receivedContent.add(side);
   }
 
   // Append content
@@ -231,13 +253,13 @@ function handleChunk(event) {
 function handleMetrics(event) {
   if (event.left) {
     const { tokenCount, duration } = event.left;
-    leftTokens.textContent = `Tokens: ${tokenCount}`;
+    leftTokens.textContent = `Tokens: ${event.left.estimated ? '~' : ''}${tokenCount ?? '--'}`;
     leftTime.textContent = `Time: ${duration}ms`;
   }
 
   if (event.right) {
     const { tokenCount, duration } = event.right;
-    rightTokens.textContent = `Tokens: ${tokenCount}`;
+    rightTokens.textContent = `Tokens: ${event.right.estimated ? '~' : ''}${tokenCount ?? '--'}`;
     rightTime.textContent = `Time: ${duration}ms`;
   }
 }
@@ -247,21 +269,35 @@ function handleMetrics(event) {
  */
 function handleStreamError(event) {
   const { side, message } = event;
+  if (!side) {
+    errorMessage.textContent = message;
+    errorSection.classList.remove('hidden');
+    return;
+  }
   const targetElement = side === 'left' ? leftContent : rightContent;
-  targetElement.innerHTML = `<span class="text-red-600">Error: ${escapeHtml(message)}</span>`;
+  if (!receivedContent.has(side)) targetElement.textContent = '';
+  receivedContent.add(side);
+  const error = document.createElement('span');
+  error.className = 'text-red-600';
+  error.textContent = `\nError: ${message}`;
+  targetElement.appendChild(error);
 }
 
 /**
  * Handle comparison complete
  */
-function handleComplete() {
-  showNotification('Comparison complete');
+function handleComplete(event) {
+  for (const [side, element] of [['left', leftContent], ['right', rightContent]]) {
+    if (!receivedContent.has(side)) element.textContent = 'No text returned';
+  }
+  showNotification(event.success === false ? 'Comparison finished with errors' : 'Comparison complete');
 }
 
 /**
  * Handle clear button
  */
 function handleClear() {
+  comparisonController?.abort();
   promptInput.value = '';
   resultsSection.classList.add('hidden');
   errorSection.classList.add('hidden');
@@ -278,8 +314,7 @@ function showError(message) {
   errorSection.classList.remove('hidden');
   resultsSection.classList.add('hidden');
   loadingOverlay.classList.add('hidden');
-  isComparing = false;
-  compareBtn.disabled = false;
+  compareBtn.disabled = availableModels.length < 2;
 }
 
 /**
@@ -303,11 +338,15 @@ function copyToClipboard(elementId) {
   const element = document.getElementById(elementId);
   const text = element.textContent;
 
-  if (!text || text.includes('Loading') || text.includes('Waiting')) {
+  if (!text || !receivedContent.has(elementId === 'leftContent' ? 'left' : 'right')) {
     showNotification('No content to copy');
     return;
   }
 
+  if (!navigator.clipboard) {
+    showNotification('Clipboard is unavailable in this browser');
+    return;
+  }
   navigator.clipboard
     .writeText(text)
     .then(() => {
@@ -316,15 +355,6 @@ function copyToClipboard(elementId) {
     .catch(() => {
       showNotification('Failed to copy');
     });
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 // Initialize on DOM ready

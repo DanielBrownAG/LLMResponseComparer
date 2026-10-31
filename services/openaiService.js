@@ -1,81 +1,42 @@
 const OpenAI = require('openai');
 
 class OpenAIService {
-  constructor() {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY not set in environment variables');
-    }
-    this.client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
-  }
+  constructor(client) { this.client = client; }
 
-  /**
-   * Stream completion from OpenAI
-   * @param {string} prompt - User prompt
-   * @param {string} model - Model identifier (e.g., 'gpt-4o', 'gpt-4-turbo')
-   * @returns {Promise} Stream iterator
-   */
-  async streamCompletion(prompt, model) {
-    if (!prompt || typeof prompt !== 'string') {
-      throw new Error('Invalid prompt provided');
+  async *streamCompletion(prompt, model, { signal } = {}) {
+    if (!this.client) {
+      if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not configured');
+      this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 120000, maxRetries: 0 });
     }
-
     const startTime = Date.now();
-    let tokenCount = 0;
-    let fullContent = '';
-
+    const stream = await this.client.responses.create({
+      model, input: prompt, stream: true, store: false, max_output_tokens: 16384
+    }, { signal });
+    let completed = false;
     try {
-      const stream = await this.client.chat.completions.create({
-        model,
-        messages: [
-          {
-            role: 'user',
-            content: prompt
+      for await (const event of stream) {
+        if (event.type === 'response.output_text.delta' || event.type === 'response.refusal.delta') {
+          yield { content: event.delta };
+        } else if (event.type === 'response.completed' || event.type === 'response.incomplete') {
+          completed = true;
+          yield { metadata: {
+            duration: Date.now() - startTime,
+            tokenCount: event.response.usage?.output_tokens ?? null,
+            model, completed: event.type === 'response.completed'
+          } };
+          if (event.type === 'response.incomplete') {
+            throw new Error(`Response incomplete: ${event.response.incomplete_details?.reason || 'unknown reason'}`);
           }
-        ],
-        stream: true,
-        max_tokens: 2000,
-        temperature: 0.7
-      });
-
-      return {
-        async *[Symbol.asyncIterator]() {
-          try {
-            for await (const chunk of stream) {
-              if (chunk.choices[0]?.delta?.content) {
-                const content = chunk.choices[0].delta.content;
-                fullContent += content;
-                yield {
-                  content,
-                  timestamp: Date.now()
-                };
-              }
-            }
-
-            // Estimate token count (approximation: 1 token ≈ 4 chars)
-            tokenCount = Math.ceil(fullContent.length / 4);
-
-            yield {
-              metadata: {
-                duration: Date.now() - startTime,
-                tokenCount,
-                model,
-                completed: true
-              }
-            };
-          } catch (error) {
-            yield {
-              error: error.message,
-              timestamp: Date.now()
-            };
-          }
+        } else if (event.type === 'response.failed' || event.type === 'error') {
+          throw new Error(event.response?.error?.message || event.message || 'OpenAI response failed');
         }
-      };
-    } catch (error) {
-      throw new Error(`OpenAI API error: ${error.message}`);
+      }
+      if (!completed && !signal?.aborted) throw new Error('OpenAI stream ended before completion');
+    } finally {
+      stream.controller?.abort();
     }
   }
 }
 
 module.exports = new OpenAIService();
+module.exports.OpenAIService = OpenAIService;

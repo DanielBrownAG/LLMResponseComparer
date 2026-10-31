@@ -1,187 +1,90 @@
 const express = require('express');
-const router = express.Router();
 const azureService = require('../services/azureService');
+const openaiService = require('../services/openaiService');
 
-// Model configuration - Read from environment variables
-const AVAILABLE_MODELS = {
-  'azure-gpt-4-model-1': {
-    type: 'azure',
-    modelId: 'model1',
-    name: process.env.MODEL_1_NAME
-  },
-  'azure-gpt-4-model-2': {
-    type: 'azure',
-    modelId: 'model2',
-    name: process.env.MODEL_2_NAME
-  }
-};
-
-/**
- * POST /api/compare
- * Compare responses from two Azure OpenAI models
- * Body: { prompt, leftModel, rightModel }
- */
-router.post('/compare', async (req, res) => {
-  const { prompt, leftModel, rightModel } = req.body;
-
-  // Validation
-  if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-    return res.status(400).json({ error: 'Valid prompt is required' });
-  }
-
-  if (!leftModel || !rightModel) {
-    return res.status(400).json({ error: 'Both models must be specified' });
-  }
-
-  if (leftModel === rightModel) {
-    return res.status(400).json({ error: 'Models must be different' });
-  }
-
-  if (!AVAILABLE_MODELS[leftModel] || !AVAILABLE_MODELS[rightModel]) {
-    return res.status(400).json({ error: 'Invalid model selection' });
-  }
-
-  // Set SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-
-  try {
-    // Start both streams in parallel
-    const leftConfig = AVAILABLE_MODELS[leftModel];
-    const rightConfig = AVAILABLE_MODELS[rightModel];
-
-    const leftPromise = getModelStream(leftConfig, prompt, 'left');
-    const rightPromise = getModelStream(rightConfig, prompt, 'right');
-
-    const [leftStream, rightStream] = await Promise.all([leftPromise, rightPromise]);
-
-    // Process both streams concurrently
-    await processStreams(res, leftStream, rightStream);
-
-    res.write(`data: ${JSON.stringify({ type: 'complete' })}\n\n`);
-    res.end();
-  } catch (error) {
-    console.error('Comparison error:', error);
-    res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
-    res.end();
-  }
-});
-
-/**
- * Get model stream based on configuration
- */
-async function getModelStream(config, prompt, side) {
-  try {
-    if (config.type === 'azure') {
-      return await azureService.streamCompletion(prompt, config.modelId);
+function getAvailableModels(env = process.env) {
+  const models = Object.create(null);
+  for (const number of [1, 2]) {
+    const prefix = `MODEL_${number}_`;
+    if (env[`${prefix}ENDPOINT`] && env[`${prefix}API_KEY`] && env[`${prefix}DEPLOYMENT_ID`]) {
+      models[`azure-gpt-4-model-${number}`] = {
+        type: 'azure', modelId: `model${number}`,
+        name: env[`${prefix}NAME`] || env[`${prefix}DEPLOYMENT_ID`]
+      };
     }
-    throw new Error(`Unknown model type: ${config.type}`);
-  } catch (error) {
-    throw new Error(`${side} model error: ${error.message}`);
   }
+  if (env.OPENAI_API_KEY) {
+    const ids = (env.OPENAI_MODELS || 'gpt-6-astra,gpt-6-sol,gpt-6-luna').split(',');
+    for (const modelId of ids.map(id => id.trim()).filter(Boolean)) {
+      models[`openai-${modelId}`] = { type: 'openai', modelId, name: `OpenAI ${modelId}` };
+    }
+  }
+  return models;
 }
 
-/**
- * Process both streams concurrently and send SSE events
- */
-async function processStreams(res, leftStream, rightStream) {
-  const leftIterator = leftStream[Symbol.asyncIterator]();
-  const rightIterator = rightStream[Symbol.asyncIterator]();
-
-  let leftDone = false;
-  let rightDone = false;
-  let leftMetadata = null;
-  let rightMetadata = null;
-
-  while (!leftDone || !rightDone) {
-    const promises = [];
-
-    if (!leftDone) {
-      promises.push(
-        leftIterator.next().then((result) => ({
-          side: 'left',
-          result
-        }))
-      );
+function createRouter({ models = getAvailableModels(), services = { azure: azureService, openai: openaiService } } = {}) {
+  const router = express.Router();
+  router.post('/compare', async (req, res) => {
+    const { prompt, leftModel, rightModel } = req.body || {};
+    if (typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ error: 'Valid prompt is required' });
     }
-
-    if (!rightDone) {
-      promises.push(
-        rightIterator.next().then((result) => ({
-          side: 'right',
-          result
-        }))
-      );
+    if (typeof leftModel !== 'string' || typeof rightModel !== 'string' ||
+        !Object.hasOwn(models, leftModel) || !Object.hasOwn(models, rightModel)) {
+      return res.status(400).json({ error: 'Invalid model selection' });
     }
+    if (leftModel === rightModel) return res.status(400).json({ error: 'Models must be different' });
 
-    const results = await Promise.all(promises);
-
-    for (const { side, result } of results) {
-      if (result.done) {
-        if (side === 'left') leftDone = true;
-        if (side === 'right') rightDone = true;
-      } else {
-        const value = result.value;
-
-        if (value.metadata) {
-          if (side === 'left') leftMetadata = value.metadata;
-          if (side === 'right') rightMetadata = value.metadata;
-        } else if (value.error) {
-          res.write(
-            `data: ${JSON.stringify({
-              type: 'error',
-              side,
-              message: value.error
-            })}\n\n`
-          );
-        } else if (value.content) {
-          res.write(
-            `data: ${JSON.stringify({
-              type: 'chunk',
-              side,
-              content: value.content
-            })}\n\n`
-          );
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    const controller = new AbortController();
+    const onClose = () => controller.abort();
+    res.on('close', onClose);
+    const send = event => {
+      if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+    const heartbeat = setInterval(() => {
+      if (!res.destroyed) res.write(': keep-alive\n\n');
+    }, 15000);
+    let failed = false;
+    async function consume(side, id) {
+      const config = models[id];
+      try {
+        const stream = await services[config.type].streamCompletion(prompt.trim(), config.modelId, { signal: controller.signal });
+        for await (const value of stream) {
+          if (controller.signal.aborted) break;
+          if (value.metadata) send({ type: 'metrics', [side]: value.metadata });
+          else if (value.error) {
+            failed = true;
+            send({ type: 'error', side, message: value.error });
+          } else if (value.content) send({ type: 'chunk', side, content: value.content });
         }
+      } catch (error) {
+        failed = true;
+        if (!controller.signal.aborted) send({ type: 'error', side, message: error.message });
       }
     }
-  }
-
-  // Send final metrics
-  res.write(
-    `data: ${JSON.stringify({
-      type: 'metrics',
-      left: leftMetadata,
-      right: rightMetadata
-    })}\n\n`
-  );
+    try {
+      // Forward each model independently, including while the other is connecting.
+      await Promise.all([consume('left', leftModel), consume('right', rightModel)]);
+      send({ type: 'complete', success: !failed });
+    } finally {
+      clearInterval(heartbeat);
+      res.off('close', onClose);
+      controller.abort();
+      res.end();
+    }
+  });
+  router.get('/models', (req, res) => {
+    res.json({ models: Object.entries(models).map(([id, config]) => ({ id, name: config.name, type: config.type })) });
+  });
+  router.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+  return router;
 }
 
-/**
- * GET /api/models
- * Get available models
- */
-router.get('/models', (req, res) => {
-  const models = Object.entries(AVAILABLE_MODELS).map(([key, value]) => ({
-    id: key,
-    name: value.name,
-    type: value.type
-  }));
-
-  res.json({ models });
-});
-
-/**
- * GET /api/health
- * Health check
- */
-router.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString()
-  });
-});
-
-module.exports = router;
+module.exports = createRouter();
+module.exports.createRouter = createRouter;
+module.exports.getAvailableModels = getAvailableModels;
