@@ -39,7 +39,3 @@ coverage/
 .cache/
 temp/
 tmp/
-
-# Markdown (ignore all, except readme.md)
-*.md
-!readme.md

@@ -7,7 +7,7 @@ const { createRouter, getAvailableModels } = require('../routes/api');
 const { OpenAIService } = require('../services/openaiService');
 const { AzureService, readDataLines } = require('../services/azureService');
 
-test('application starts without provider credentials and renders the page', async t => {
+test('application serves the page, frontend assets, and health endpoint', async t => {
   const app = require('../server');
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -16,6 +16,9 @@ test('application starts without provider credentials and renders the page', asy
   const page = await fetch(url);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /LLM Response Comparer/);
+  for (const asset of ['/js/app.js', '/css/styles.css']) {
+    assert.equal((await fetch(`${url}${asset}`)).status, 200);
+  }
   assert.equal((await (await fetch(`${url}/api/health`)).json()).status, 'ok');
 });
 

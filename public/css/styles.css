@@ -1,12 +1,5 @@
-/* Professional LLM Comparer Styles */
-
 :root {
-  --color-text-primary: #111827;
-  --color-text-secondary: #6b7280;
   --color-border: #e5e7eb;
-  --color-bg-panel: #f9fafb;
-  --color-blue-600: #2563eb;
-  --color-blue-700: #1d4ed8;
 }
 
 * {
@@ -114,20 +107,6 @@ button:focus {
   }
   to {
     transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-/* Content scrolling animation */
-.content-stream {
-  animation: fadeIn 0.2s ease-in;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
     opacity: 1;
   }
 }

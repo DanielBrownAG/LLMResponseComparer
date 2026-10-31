@@ -1,9 +1,3 @@
-/**
- * LLM Response Comparer - Frontend Application
- * Handles UI interactions, streaming, and real-time updates
- */
-
-// DOM Elements
 const promptInput = document.getElementById('prompt');
 const leftModelSelect = document.getElementById('leftModel');
 const rightModelSelect = document.getElementById('rightModel');
@@ -23,30 +17,23 @@ const rightTokens = document.getElementById('rightTokens');
 const leftTime = document.getElementById('leftTime');
 const rightTime = document.getElementById('rightTime');
 
-// State
 let isComparing = false;
 let availableModels = [];
 let comparisonController = null;
 const receivedContent = new Set();
 
-/**
- * Initialize application
- */
 async function init() {
   try {
-    // Fetch available models
     const response = await fetch('/api/models');
     if (!response.ok) throw new Error('Failed to load models');
     const data = await response.json();
     availableModels = data.models;
 
-    // Populate model dropdowns
     populateModelSelects();
     if (availableModels.length < 2) {
       showError('Configure an OpenAI API key or at least two model deployments, then restart the server.');
     }
 
-    // Attach event listeners
     compareBtn.addEventListener('click', handleCompare);
     clearBtn.addEventListener('click', handleClear);
     promptInput.addEventListener('keydown', (e) => {
@@ -60,32 +47,24 @@ async function init() {
   }
 }
 
-/**
- * Populate model selection dropdowns
- */
 function populateModelSelects() {
   for (const select of [leftModelSelect, rightModelSelect]) {
     select.replaceChildren(new Option('Select model...', ''));
     for (const model of availableModels) select.add(new Option(model.name, model.id));
   }
 
-  // Set defaults if available
   if (availableModels.length >= 2) {
     leftModelSelect.value = availableModels[0].id;
     rightModelSelect.value = availableModels[1].id;
   }
 }
 
-/**
- * Handle compare button click
- */
 async function handleCompare() {
   if (isComparing) return;
   const prompt = promptInput.value.trim();
   const leftModel = leftModelSelect.value;
   const rightModel = rightModelSelect.value;
 
-  // Validation
   if (!prompt) {
     showError('Please enter a prompt');
     return;
@@ -109,9 +88,6 @@ async function handleCompare() {
   await performComparison(prompt, leftModel, rightModel);
 }
 
-/**
- * Perform the comparison
- */
 async function performComparison(prompt, leftModelId, rightModelId) {
   if (isComparing) return;
 
@@ -124,7 +100,6 @@ async function performComparison(prompt, leftModelId, rightModelId) {
   errorSection.classList.add('hidden');
   resultsSection.classList.remove('hidden');
 
-  // Reset content
   leftContent.innerHTML = '<span class="animate-pulse">Waiting for response...</span>';
   rightContent.innerHTML = '<span class="animate-pulse">Waiting for response...</span>';
   leftTokens.textContent = 'Tokens: --';
@@ -132,7 +107,6 @@ async function performComparison(prompt, leftModelId, rightModelId) {
   leftTime.textContent = 'Time: --ms';
   rightTime.textContent = 'Time: --ms';
 
-  // Update titles
   const leftModelName = availableModels.find((m) => m.id === leftModelId)?.name || leftModelId;
   const rightModelName = availableModels.find((m) => m.id === rightModelId)?.name || rightModelId;
   leftModelTitle.textContent = leftModelName;
@@ -157,7 +131,6 @@ async function performComparison(prompt, leftModelId, rightModelId) {
       throw new Error(error.error || 'Comparison failed');
     }
 
-    // Process Server-Sent Events stream
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -207,9 +180,6 @@ async function performComparison(prompt, leftModelId, rightModelId) {
   }
 }
 
-/**
- * Handle streaming events
- */
 function handleStreamEvent(event) {
   switch (event.type) {
     case 'chunk':
@@ -227,9 +197,6 @@ function handleStreamEvent(event) {
   }
 }
 
-/**
- * Handle chunk events (streamed text)
- */
 function handleChunk(event) {
   const { side, content } = event;
   const targetElement = side === 'left' ? leftContent : rightContent;
@@ -240,16 +207,12 @@ function handleChunk(event) {
     receivedContent.add(side);
   }
 
-  // Append content
   targetElement.textContent += content;
 
   // Auto-scroll to bottom
   targetElement.parentElement.scrollTop = targetElement.parentElement.scrollHeight;
 }
 
-/**
- * Handle metrics events (token count, response time)
- */
 function handleMetrics(event) {
   if (event.left) {
     const { tokenCount, duration } = event.left;
@@ -264,9 +227,6 @@ function handleMetrics(event) {
   }
 }
 
-/**
- * Handle stream errors
- */
 function handleStreamError(event) {
   const { side, message } = event;
   if (!side) {
@@ -283,9 +243,6 @@ function handleStreamError(event) {
   targetElement.appendChild(error);
 }
 
-/**
- * Handle comparison complete
- */
 function handleComplete(event) {
   for (const [side, element] of [['left', leftContent], ['right', rightContent]]) {
     if (!receivedContent.has(side)) element.textContent = 'No text returned';
@@ -293,9 +250,6 @@ function handleComplete(event) {
   showNotification(event.success === false ? 'Comparison finished with errors' : 'Comparison complete');
 }
 
-/**
- * Handle clear button
- */
 function handleClear() {
   comparisonController?.abort();
   promptInput.value = '';
@@ -306,9 +260,6 @@ function handleClear() {
   promptInput.focus();
 }
 
-/**
- * Show error message
- */
 function showError(message) {
   errorMessage.textContent = message;
   errorSection.classList.remove('hidden');
@@ -317,9 +268,6 @@ function showError(message) {
   compareBtn.disabled = availableModels.length < 2;
 }
 
-/**
- * Show notification toast
- */
 function showNotification(message) {
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -331,9 +279,6 @@ function showNotification(message) {
   }, 3001);
 }
 
-/**
- * Copy content to clipboard
- */
 function copyToClipboard(elementId) {
   const element = document.getElementById(elementId);
   const text = element.textContent;
@@ -357,5 +302,4 @@ function copyToClipboard(elementId) {
     });
 }
 
-// Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', init);
