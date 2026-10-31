@@ -7,6 +7,11 @@ const resultsSection = document.getElementById('resultsSection');
 const errorSection = document.getElementById('errorSection');
 const errorMessage = document.getElementById('errorMessage');
 const loadingOverlay = document.getElementById('loadingOverlay');
+const saveComparisonBtn = document.getElementById('saveComparisonBtn');
+const exportJsonBtn = document.getElementById('exportJsonBtn');
+const exportMarkdownBtn = document.getElementById('exportMarkdownBtn');
+const savedComparisons = document.getElementById('savedComparisons');
+const savedMessage = document.getElementById('savedMessage');
 
 const leftContent = document.getElementById('leftContent');
 const rightContent = document.getElementById('rightContent');
@@ -21,8 +26,14 @@ let isComparing = false;
 let availableModels = [];
 let comparisonController = null;
 const receivedContent = new Set();
+let currentComparison = null;
 
 async function init() {
+  saveComparisonBtn.addEventListener('click', saveCurrentComparison);
+  exportJsonBtn.addEventListener('click', () => downloadComparison(currentComparison, 'json'));
+  exportMarkdownBtn.addEventListener('click', () => downloadComparison(currentComparison, 'markdown'));
+  clearBtn.addEventListener('click', handleClear);
+  renderSavedComparisons();
   try {
     const response = await fetch('/api/models');
     if (!response.ok) throw new Error('Failed to load models');
@@ -35,7 +46,6 @@ async function init() {
     }
 
     compareBtn.addEventListener('click', handleCompare);
-    clearBtn.addEventListener('click', handleClear);
     promptInput.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         handleCompare();
@@ -111,6 +121,14 @@ async function performComparison(prompt, leftModelId, rightModelId) {
   const rightModelName = availableModels.find((m) => m.id === rightModelId)?.name || rightModelId;
   leftModelTitle.textContent = leftModelName;
   rightModelTitle.textContent = rightModelName;
+  currentComparison = {
+    id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    createdAt: new Date().toISOString(), prompt, status: 'streaming', error: '',
+    left: { modelId: leftModelId, modelName: leftModelName, content: '', metrics: null, error: '' },
+    right: { modelId: rightModelId, modelName: rightModelName, content: '', metrics: null, error: '' }
+  };
+  updateComparisonActions();
+  renderSavedComparisons();
 
   try {
     const response = await fetch('/api/compare', {
@@ -136,6 +154,7 @@ async function performComparison(prompt, leftModelId, rightModelId) {
     let buffer = '';
     let completed = false;
     function processLine(line) {
+      if (comparisonController.signal.aborted) return;
       if (!line.startsWith('data:')) return;
       const event = JSON.parse(line.slice(5).trim());
       if (event.type === 'complete') completed = true;
@@ -168,6 +187,10 @@ async function performComparison(prompt, leftModelId, rightModelId) {
     if (!completed) throw new Error('Connection closed before comparison completed');
   } catch (error) {
     if (error.name !== 'AbortError') {
+      if (currentComparison) {
+        currentComparison.status = 'error';
+        currentComparison.error = error.message || 'Comparison failed';
+      }
       errorMessage.textContent = error.message || 'An error occurred during comparison';
       errorSection.classList.remove('hidden');
     }
@@ -177,6 +200,8 @@ async function performComparison(prompt, leftModelId, rightModelId) {
     compareBtn.disabled = availableModels.length < 2;
     compareBtn.textContent = 'Compare';
     loadingOverlay.classList.add('hidden');
+    updateComparisonActions();
+    renderSavedComparisons();
   }
 }
 
@@ -199,6 +224,7 @@ function handleStreamEvent(event) {
 
 function handleChunk(event) {
   const { side, content } = event;
+  if (currentComparison?.[side]) currentComparison[side].content += content;
   const targetElement = side === 'left' ? leftContent : rightContent;
 
   // Clear initial loading message
@@ -214,6 +240,9 @@ function handleChunk(event) {
 }
 
 function handleMetrics(event) {
+  for (const side of ['left', 'right']) {
+    if (event[side] && currentComparison) currentComparison[side].metrics = event[side];
+  }
   if (event.left) {
     const { tokenCount, duration } = event.left;
     leftTokens.textContent = `Tokens: ${event.left.estimated ? '~' : ''}${tokenCount ?? '--'}`;
@@ -229,6 +258,11 @@ function handleMetrics(event) {
 
 function handleStreamError(event) {
   const { side, message } = event;
+  if (currentComparison) {
+    currentComparison.status = 'error';
+    if (side) currentComparison[side].error = message;
+    else currentComparison.error = message;
+  }
   if (!side) {
     errorMessage.textContent = message;
     errorSection.classList.remove('hidden');
@@ -244,6 +278,9 @@ function handleStreamError(event) {
 }
 
 function handleComplete(event) {
+  if (currentComparison && currentComparison.status !== 'error') {
+    currentComparison.status = event.success === false ? 'error' : 'complete';
+  }
   for (const [side, element] of [['left', leftContent], ['right', rightContent]]) {
     if (!receivedContent.has(side)) element.textContent = 'No text returned';
   }
@@ -252,6 +289,8 @@ function handleComplete(event) {
 
 function handleClear() {
   comparisonController?.abort();
+  currentComparison = null;
+  updateComparisonActions();
   promptInput.value = '';
   resultsSection.classList.add('hidden');
   errorSection.classList.add('hidden');
@@ -300,6 +339,111 @@ function copyToClipboard(elementId) {
     .catch(() => {
       showNotification('Failed to copy');
     });
+}
+
+function updateComparisonActions() {
+  const disabled = isComparing || !currentComparison || currentComparison.status === 'streaming';
+  for (const button of [saveComparisonBtn, exportJsonBtn, exportMarkdownBtn]) button.disabled = disabled;
+}
+
+function saveCurrentComparison() {
+  if (isComparing || !currentComparison) return;
+  try {
+    ComparisonHistory.save(localStorage, currentComparison);
+    renderSavedComparisons();
+    showNotification('Comparison saved in this browser');
+  } catch (error) {
+    savedMessage.textContent = error.message;
+  }
+}
+
+function renderSavedComparisons() {
+  savedComparisons.replaceChildren();
+  try {
+    const comparisons = ComparisonHistory.read(localStorage);
+    savedMessage.textContent = comparisons.length ? `${comparisons.length} saved` : 'No saved comparisons yet.';
+    for (const comparison of comparisons) {
+      const row = document.createElement('li');
+      row.className = 'border border-gray-200 rounded-lg p-4';
+      const title = document.createElement('p');
+      title.className = 'font-semibold whitespace-pre-wrap break-words';
+      title.textContent = comparison.prompt.length > 120 ? comparison.prompt.slice(0, 120) + '…' : comparison.prompt;
+      const details = document.createElement('p');
+      details.className = 'text-sm text-gray-600 mt-1 break-words';
+      details.textContent = `${new Date(comparison.createdAt).toLocaleString()} · ${comparison.left.modelName} / ${comparison.right.modelName} · ${comparison.status === 'error' ? 'With errors' : 'Complete'}`;
+      const actions = document.createElement('div');
+      actions.className = 'flex flex-wrap gap-3 mt-3';
+      const addAction = (label, action, disabled = false) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'px-3 py-1 border rounded text-sm disabled:opacity-50';
+        button.textContent = label;
+        button.disabled = disabled;
+        button.addEventListener('click', action);
+        actions.appendChild(button);
+      };
+      addAction('Open', () => openSavedComparison(comparison), isComparing);
+      addAction('Export JSON', () => downloadComparison(comparison, 'json'));
+      addAction('Export Markdown', () => downloadComparison(comparison, 'markdown'));
+      addAction('Delete', () => {
+        try {
+          ComparisonHistory.remove(localStorage, comparison.id);
+          renderSavedComparisons();
+        } catch (error) { savedMessage.textContent = error.message; }
+      });
+      row.appendChild(title);
+      row.appendChild(details);
+      row.appendChild(actions);
+      savedComparisons.appendChild(row);
+    }
+  } catch (error) {
+    savedMessage.textContent = `Saved comparisons unavailable: ${error.message}`;
+  }
+}
+
+function openSavedComparison(comparison) {
+  if (isComparing) return;
+  // Keep the stored snapshot separate from the currently displayed result.
+  currentComparison = JSON.parse(JSON.stringify(comparison));
+  receivedContent.clear();
+  promptInput.value = comparison.prompt;
+  errorSection.classList.add('hidden');
+  resultsSection.classList.remove('hidden');
+  for (const side of ['left', 'right']) {
+    const result = comparison[side];
+    const content = side === 'left' ? leftContent : rightContent;
+    const select = side === 'left' ? leftModelSelect : rightModelSelect;
+    select.value = availableModels.some(model => model.id === result.modelId) ? result.modelId : '';
+    (side === 'left' ? leftModelTitle : rightModelTitle).textContent = result.modelName;
+    content.textContent = result.content || 'No text returned';
+    if (result.content) receivedContent.add(side);
+    (side === 'left' ? leftTokens : rightTokens).textContent = 'Tokens: --';
+    (side === 'left' ? leftTime : rightTime).textContent = 'Time: --ms';
+    if (result.metrics) handleMetrics({ [side]: result.metrics });
+    if (result.error) handleStreamError({ side, message: result.error });
+  }
+  if (comparison.error) handleStreamError({ message: comparison.error });
+  updateComparisonActions();
+}
+
+function downloadComparison(comparison, format) {
+  if (!comparison || comparison.status === 'streaming') return;
+  let url;
+  let link;
+  try {
+    const file = ComparisonHistory.exportComparison(comparison, format);
+    url = URL.createObjectURL(new Blob([file.content], { type: file.mime }));
+    link = document.createElement('a');
+    link.href = url;
+    link.download = file.filename;
+    document.body.appendChild(link);
+    link.click();
+  } catch (error) {
+    savedMessage.textContent = `Export failed: ${error.message}`;
+  } finally {
+    link?.remove();
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

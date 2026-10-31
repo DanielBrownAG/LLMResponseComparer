@@ -42,6 +42,10 @@ Enter a prompt, choose two different models, and click **Compare** or press Ctrl
 
 Metrics arrive as each side finishes. Tokens come from provider usage, including OpenAI reasoning tokens; Azure estimates missing usage and marks it `~`. Errors preserve partial text and let the other model continue. Incomplete responses and dropped streams are reported.
 
+After a comparison finishes, **Save comparison** stores its prompt, model IDs and names, responses, metrics, and any errors in this browser. Saved comparisons can be opened or deleted, and the current result or any saved entry can be exported as JSON or Markdown. Opening a result does not call the models again; unavailable models must be reselected before rerunning.
+
+Saving is manual, with a limit of 100 entries and no automatic deletion. Browser storage is specific to this site's address and browser profile; clearing site data removes saved results. Storage errors leave existing entries untouched, and exports remain available if saving is blocked or storage is full. Prompts and responses may contain sensitive information; save and share exports accordingly.
+
 Keys stay in the ignored `.env` file. The app has no authentication or rate limiting: configure access controls before exposing it publicly. Styling loads Tailwind from its CDN.
 
 ## API and streaming

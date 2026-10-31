@@ -16,7 +16,7 @@ test('application serves the page, frontend assets, and health endpoint', async 
   const page = await fetch(url);
   assert.equal(page.status, 200);
   assert.match(await page.text(), /LLM Response Comparer/);
-  for (const asset of ['/js/app.js', '/css/styles.css']) {
+  for (const asset of ['/js/app.js', '/js/comparisons.js', '/css/styles.css']) {
     assert.equal((await fetch(`${url}${asset}`)).status, 200);
   }
   assert.equal((await (await fetch(`${url}/api/health`)).json()).status, 'ok');
