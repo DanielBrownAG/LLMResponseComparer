@@ -13,7 +13,12 @@
         !text(comparison.createdAt) || !Number.isFinite(Date.parse(comparison.createdAt)) ||
         !text(comparison.prompt) || !text(comparison.error) ||
         !['complete', 'error'].includes(comparison.status) ||
-        !side(comparison.left) || !side(comparison.right)) {
+        !side(comparison.left) || !side(comparison.right) ||
+        (comparison.blind !== undefined && typeof comparison.blind !== 'boolean') ||
+        (comparison.revealed !== undefined && typeof comparison.revealed !== 'boolean') ||
+        (comparison.vote != null && !['left', 'right', 'tie'].includes(comparison.vote)) ||
+        (comparison.blind && comparison.vote != null &&
+          (!comparison.revealed || comparison.status !== 'complete'))) {
       throw new Error('Saved comparison data is invalid; existing storage has been left unchanged.');
     }
     return comparison;
@@ -59,6 +64,7 @@
 
   function exportComparison(comparison, format) {
     validate(comparison);
+    if (comparison.blind && !comparison.revealed) throw new Error('Vote before exporting this blind comparison. Failed comparisons can be revealed without a vote.');
     const filename = `comparison-${new Date(comparison.createdAt).toISOString().slice(0, 10)}-${comparison.id.replace(/[^a-z0-9-]/gi, '').slice(0, 12)}`;
     if (format === 'json') {
       return { filename: `${filename}.json`, mime: 'application/json;charset=utf-8',
@@ -74,6 +80,7 @@
     };
     const lines = ['# Saved comparison', '', `Date: ${new Date(comparison.createdAt).toISOString()}`,
       `Status: ${comparison.status}`, '', '## Prompt', '', block(comparison.prompt)];
+    if (comparison.blind) lines.splice(4, 0, `Blind comparison: yes`, `Vote: ${comparison.vote || 'not cast'}`);
     if (comparison.error) lines.push('', '## Comparison error', '', block(comparison.error));
     for (const side of ['left', 'right']) {
       const result = comparison[side];

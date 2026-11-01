@@ -12,6 +12,14 @@ const exportJsonBtn = document.getElementById('exportJsonBtn');
 const exportMarkdownBtn = document.getElementById('exportMarkdownBtn');
 const savedComparisons = document.getElementById('savedComparisons');
 const savedMessage = document.getElementById('savedMessage');
+const blindMode = document.getElementById('blindMode');
+const modelSelection = document.getElementById('modelSelection');
+const votingSection = document.getElementById('votingSection');
+const voteMessage = document.getElementById('voteMessage');
+const voteLeftBtn = document.getElementById('voteLeftBtn');
+const voteRightBtn = document.getElementById('voteRightBtn');
+const voteTieBtn = document.getElementById('voteTieBtn');
+const revealFailedBtn = document.getElementById('revealFailedBtn');
 
 const leftContent = document.getElementById('leftContent');
 const rightContent = document.getElementById('rightContent');
@@ -29,6 +37,10 @@ const receivedContent = new Set();
 let currentComparison = null;
 
 async function init() {
+  voteLeftBtn.addEventListener('click', () => castVote('left'));
+  voteRightBtn.addEventListener('click', () => castVote('right'));
+  voteTieBtn.addEventListener('click', () => castVote('tie'));
+  revealFailedBtn.addEventListener('click', revealFailedComparison);
   saveComparisonBtn.addEventListener('click', saveCurrentComparison);
   exportJsonBtn.addEventListener('click', () => downloadComparison(currentComparison, 'json'));
   exportMarkdownBtn.addEventListener('click', () => downloadComparison(currentComparison, 'markdown'));
@@ -100,6 +112,8 @@ async function handleCompare() {
 
 async function performComparison(prompt, leftModelId, rightModelId) {
   if (isComparing) return;
+  const blind = Boolean(blindMode.checked);
+  if (blind && Math.random() < 0.5) [leftModelId, rightModelId] = [rightModelId, leftModelId];
 
   isComparing = true;
   comparisonController = new AbortController();
@@ -124,6 +138,7 @@ async function performComparison(prompt, leftModelId, rightModelId) {
   currentComparison = {
     id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     createdAt: new Date().toISOString(), prompt, status: 'streaming', error: '',
+    blind, revealed: !blind, vote: null,
     left: { modelId: leftModelId, modelName: leftModelName, content: '', metrics: null, error: '' },
     right: { modelId: rightModelId, modelName: rightModelName, content: '', metrics: null, error: '' }
   };
@@ -191,7 +206,7 @@ async function performComparison(prompt, leftModelId, rightModelId) {
         currentComparison.status = 'error';
         currentComparison.error = error.message || 'Comparison failed';
       }
-      errorMessage.textContent = error.message || 'An error occurred during comparison';
+      errorMessage.textContent = isBlindHidden() ? 'Comparison failed. Reveal the comparison to see details.' : error.message || 'An error occurred during comparison';
       errorSection.classList.remove('hidden');
     }
   } finally {
@@ -243,6 +258,7 @@ function handleMetrics(event) {
   for (const side of ['left', 'right']) {
     if (event[side] && currentComparison) currentComparison[side].metrics = event[side];
   }
+  if (isBlindHidden()) return;
   if (event.left) {
     const { tokenCount, duration } = event.left;
     leftTokens.textContent = `Tokens: ${event.left.estimated ? '~' : ''}${tokenCount ?? '--'}`;
@@ -263,8 +279,9 @@ function handleStreamError(event) {
     if (side) currentComparison[side].error = message;
     else currentComparison.error = message;
   }
+  const displayMessage = isBlindHidden() ? 'Response failed. Reveal the comparison to see details.' : message;
   if (!side) {
-    errorMessage.textContent = message;
+    errorMessage.textContent = displayMessage;
     errorSection.classList.remove('hidden');
     return;
   }
@@ -273,7 +290,7 @@ function handleStreamError(event) {
   receivedContent.add(side);
   const error = document.createElement('span');
   error.className = 'text-red-600';
-  error.textContent = `\nError: ${message}`;
+  error.textContent = `\nError: ${displayMessage}`;
   targetElement.appendChild(error);
 }
 
@@ -341,9 +358,67 @@ function copyToClipboard(elementId) {
     });
 }
 
+function isBlindHidden() {
+  return Boolean(currentComparison?.blind && !currentComparison.revealed);
+}
+
+function hasBothResponses() {
+  return currentComparison?.status === 'complete' && !currentComparison.error &&
+    ['left', 'right'].every(side => currentComparison[side].content.trim() && !currentComparison[side].error);
+}
+
+function updateBlindView() {
+  const hidden = isBlindHidden();
+  modelSelection.classList[hidden ? 'add' : 'remove']('hidden');
+  blindMode.disabled = isComparing || hidden;
+  votingSection.classList[currentComparison?.blind ? 'remove' : 'add']('hidden');
+  if (!currentComparison) return;
+  leftModelTitle.textContent = hidden ? 'Response A (left)' : currentComparison.left.modelName;
+  rightModelTitle.textContent = hidden ? 'Response B (right)' : currentComparison.right.modelName;
+  const canVote = hidden && !isComparing && hasBothResponses();
+  for (const button of [voteLeftBtn, voteRightBtn, voteTieBtn]) button.disabled = !canVote;
+  const failed = hidden && !isComparing && !hasBothResponses();
+  revealFailedBtn.classList[failed ? 'remove' : 'add']('hidden');
+  if (currentComparison.vote) voteMessage.textContent = `Vote recorded: ${currentComparison.vote === 'tie' ? 'Tie' : `${currentComparison.vote === 'left' ? 'Left' : 'Right'} is better`}. Model identities revealed.`;
+  else if (!hidden) voteMessage.textContent = 'Model identities revealed without a vote.';
+  else if (isComparing) voteMessage.textContent = 'Blind comparison in progress. Voting opens when both responses finish.';
+  else if (failed) voteMessage.textContent = 'Both responses must finish successfully with text to vote. Reveal details or clear to start again.';
+  else voteMessage.textContent = 'Choose the better response or a tie to reveal the models. Clear discards this result.';
+}
+
+function persistRevealedComparison() {
+  openSavedComparison(currentComparison);
+  try {
+    if (ComparisonHistory.read(localStorage).some(item => item.id === currentComparison.id)) {
+      ComparisonHistory.save(localStorage, currentComparison);
+    }
+    renderSavedComparisons();
+  } catch (error) {
+    savedMessage.textContent = `Result updated in this view, but could not update storage: ${error.message}`;
+  }
+}
+
+function castVote(vote) {
+  if (!['left', 'right', 'tie'].includes(vote) || isComparing || !isBlindHidden() || !hasBothResponses()) return;
+  currentComparison.vote = vote;
+  currentComparison.revealed = true;
+  persistRevealedComparison();
+}
+
+function revealFailedComparison() {
+  if (isComparing || !isBlindHidden() || hasBothResponses()) return;
+  currentComparison.revealed = true;
+  persistRevealedComparison();
+}
+
 function updateComparisonActions() {
   const disabled = isComparing || !currentComparison || currentComparison.status === 'streaming';
   for (const button of [saveComparisonBtn, exportJsonBtn, exportMarkdownBtn]) button.disabled = disabled;
+  if (isBlindHidden()) {
+    exportJsonBtn.disabled = true;
+    exportMarkdownBtn.disabled = true;
+  }
+  updateBlindView();
 }
 
 function saveCurrentComparison() {
@@ -370,7 +445,8 @@ function renderSavedComparisons() {
       title.textContent = comparison.prompt.length > 120 ? comparison.prompt.slice(0, 120) + '…' : comparison.prompt;
       const details = document.createElement('p');
       details.className = 'text-sm text-gray-600 mt-1 break-words';
-      details.textContent = `${new Date(comparison.createdAt).toLocaleString()} · ${comparison.left.modelName} / ${comparison.right.modelName} · ${comparison.status === 'error' ? 'With errors' : 'Complete'}`;
+      const names = comparison.blind && !comparison.revealed ? 'Blind comparison — not revealed' : `${comparison.left.modelName} / ${comparison.right.modelName}`;
+      details.textContent = `${new Date(comparison.createdAt).toLocaleString()} · ${names} · ${comparison.status === 'error' ? 'With errors' : 'Complete'}${comparison.vote ? ` · Vote: ${comparison.vote}` : ''}`;
       const actions = document.createElement('div');
       actions.className = 'flex flex-wrap gap-3 mt-3';
       const addAction = (label, action, disabled = false) => {
@@ -383,8 +459,8 @@ function renderSavedComparisons() {
         actions.appendChild(button);
       };
       addAction('Open', () => openSavedComparison(comparison), isComparing);
-      addAction('Export JSON', () => downloadComparison(comparison, 'json'));
-      addAction('Export Markdown', () => downloadComparison(comparison, 'markdown'));
+      addAction('Export JSON', () => downloadComparison(comparison, 'json'), comparison.blind && !comparison.revealed);
+      addAction('Export Markdown', () => downloadComparison(comparison, 'markdown'), comparison.blind && !comparison.revealed);
       addAction('Delete', () => {
         try {
           ComparisonHistory.remove(localStorage, comparison.id);
@@ -405,6 +481,7 @@ function openSavedComparison(comparison) {
   if (isComparing) return;
   // Keep the stored snapshot separate from the currently displayed result.
   currentComparison = JSON.parse(JSON.stringify(comparison));
+  blindMode.checked = Boolean(comparison.blind);
   receivedContent.clear();
   promptInput.value = comparison.prompt;
   errorSection.classList.add('hidden');

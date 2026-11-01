@@ -44,6 +44,10 @@ Metrics arrive as each side finishes. Tokens come from provider usage, including
 
 After a comparison finishes, **Save comparison** stores its prompt, model IDs and names, responses, metrics, and any errors in this browser. Saved comparisons can be opened or deleted, and the current result or any saved entry can be exported as JSON or Markdown. Opening a result does not call the models again; unavailable models must be reselected before rerunning.
 
+Enable **Blind comparison** before comparing to shuffle the selected models between sides. Model selections, result names, metrics, and detailed errors stay hidden until you choose **Left is better**, **Right is better**, or **Tie**. Voting requires two successful, nonempty responses and cannot be changed after revealing. Failed or empty comparisons can be revealed without voting. Clear discards the current result.
+
+Unrevealed comparisons can be saved and reopened blind, but cannot be exported until revealed. Votes are included in JSON and Markdown exports; voting on an already saved entry updates it automatically. New results still require **Save comparison**. Older saved entries remain supported. This is a UI blind test: response text may identify a model, and developer tools can inspect the underlying data.
+
 Saving is manual, with a limit of 100 entries and no automatic deletion. Browser storage is specific to this site's address and browser profile; clearing site data removes saved results. Storage errors leave existing entries untouched, and exports remain available if saving is blocked or storage is full. Prompts and responses may contain sensitive information; save and share exports accordingly.
 
 Keys stay in the ignored `.env` file. The app has no authentication or rate limiting: configure access controls before exposing it publicly. Styling loads Tailwind from its CDN.

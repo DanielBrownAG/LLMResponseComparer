@@ -82,3 +82,21 @@ test('Markdown export preserves Unicode, metrics, errors and embedded code fence
   assert.match(file.filename, /\.md$/);
   assert.throws(() => history.exportComparison(saved, 'html'), /Unsupported/);
 });
+
+test('blind records preserve votes and block exports before reveal while legacy records still load', () => {
+  const saved = comparison();
+  const store = storage();
+  history.save(store, saved);
+  assert.equal(history.read(store)[0].blind, undefined);
+  saved.blind = true; saved.revealed = false; saved.vote = null;
+  history.save(store, saved);
+  for (const format of ['json', 'markdown']) assert.throws(() => history.exportComparison(saved, format), /Vote before exporting/);
+  saved.revealed = true; saved.vote = 'tie';
+  history.save(store, saved);
+  assert.equal(history.read(store)[0].vote, 'tie');
+  assert.match(history.exportComparison(saved, 'markdown').content, /Vote: tie/);
+  assert.equal(JSON.parse(history.exportComparison(saved, 'json').content).comparison.blind, true);
+  saved.vote = 'invalid';
+  assert.throws(() => history.save(store, saved), /invalid/);
+  assert.equal(history.read(store)[0].vote, 'tie');
+});
