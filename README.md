@@ -1,5 +1,9 @@
 # LLM Response Comparer
 
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Last commit](https://img.shields.io/github/last-commit/DanielBrownAG/LLMResponseComparer/main)](https://github.com/DanielBrownAG/LLMResponseComparer/commits/main/)
+[![Tests](https://github.com/DanielBrownAG/LLMResponseComparer/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/DanielBrownAG/LLMResponseComparer/actions/workflows/tests.yml)
+
 <img src="public/images/logo.png" alt="LLM Response Comparer logo" width="128">
 
 ![LLM Response Comparer](main.png)
@@ -18,6 +22,8 @@ npm start
 ```
 
 Open [localhost:3001](http://localhost:3001). `PORT` overrides the port. Use `npm run dev` for Node's native server watcher and `npm test` for regression tests with mocked providers and local HTTP servers.
+
+GitHub Actions runs `npm ci` and `npm test` on Node.js 22 and 24 for pushes to `main` and pull requests. Tests require no API keys; the workflow can also be run manually from the Actions tab.
 
 ### Configure providers
 
