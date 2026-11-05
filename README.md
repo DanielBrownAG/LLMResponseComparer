@@ -1,7 +1,7 @@
 # LLM Response Comparer
 
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![Last commit](https://img.shields.io/github/last-commit/DanielBrownAG/LLMResponseComparer/main?style=flat&cacheSeconds=3600)](https://github.com/DanielBrownAG/LLMResponseComparer/commits/main/)
+[![Last commit](https://img.shields.io/github/last-commit/DanielBrownAG/LLMResponseComparer/main.png)](https://github.com/DanielBrownAG/LLMResponseComparer/commits/main/)
 [![Tests](https://github.com/DanielBrownAG/LLMResponseComparer/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/DanielBrownAG/LLMResponseComparer/actions/workflows/tests.yml)
 
 <img src="public/images/logo.png" alt="LLM Response Comparer logo" width="128">
