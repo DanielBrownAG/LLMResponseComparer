@@ -1,5 +1,7 @@
 # LLM Response Comparer
 
+<img src="public/images/logo.png" alt="LLM Response Comparer logo" width="128">
+
 ![LLM Response Comparer](main.png)
 
 Compare two OpenAI or Azure OpenAI models with independent live text, token counts, and response times. Express serves a static frontend; no build step is required.
