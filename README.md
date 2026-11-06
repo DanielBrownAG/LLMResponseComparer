@@ -1,6 +1,7 @@
 # LLM Response Comparer
 
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/DanielBrownAG/LLMResponseComparer)](https://github.com/DanielBrownAG/LLMResponseComparer/commits/main/)
 [![Tests](https://github.com/DanielBrownAG/LLMResponseComparer/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/DanielBrownAG/LLMResponseComparer/actions/workflows/tests.yml)
 
@@ -81,4 +82,4 @@ Implementation: `server.js` serves `public/` and mounts `routes/api.js`; `servic
 
 ## License
 
-MIT
+[MIT](LICENSE) — Copyright (c) 2026 Daniel Brown.
